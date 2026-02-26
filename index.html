@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>LernArchiv</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  body { background: #0b0b0f; color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; padding: 0; }
+  header { background: #1a1a2e; padding: 1rem; text-align:center; }
+  button { background: #4caf50; border: none; color: white; padding: 10px 20px; margin: 5px; cursor: pointer; border-radius: 5px; }
+  button:hover { background: #45a049; }
+  #xpBar { background: #333; border-radius: 5px; width: 300px; height: 20px; margin: 10px auto; }
+  #xpFill { background: #4caf50; height: 100%; width: 0%; border-radius: 5px; }
+  section { padding: 1rem; max-width: 800px; margin: auto; }
+  details { background: #222; padding: 10px; margin: 10px 0; border-radius: 5px; }
+  summary { cursor: pointer; font-weight: bold; }
+  input, select, textarea { width: 100%; margin: 5px 0; padding: 5px; border-radius: 5px; border: none; }
+  #forumComments { max-height: 200px; overflow-y: auto; border: 1px solid #444; padding: 10px; margin: 10px 0; }
+  .badge { display: inline-block; margin: 5px; background: #444; padding: 5px 10px; border-radius: 5px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LernArchiv</h1>
+  <button onclick="login()">🔐 Mit Google einloggen</button>
+</header>
+
+<section>
+  <h2>XP & Level</h2>
+  <div id="xpBar"><div id="xpFill"></div></div>
+  <p id="levelText">Level: 1 | XP: 0</p>
+  <button onclick="addXP(10)">➕ 10 XP</button>
+</section>
+
+<section>
+  <h2>Badges</h2>
+  <div id="badgesContainer"></div>
+</section>
+
+<section>
+  <h2>Wöchentliches Rätsel</h2>
+  <details>
+    <summary>📚 Schulfach wählen</summary>
+    <select id="subjectSelect">
+      <option value="mathe">Mathe</option>
+      <option value="deutsch">Deutsch</option>
+      <option value="bio">Biologie</option>
+      <option value="geschichte">Geschichte</option>
+    </select>
+    <button onclick="getWeeklyPuzzle()">Rätsel anzeigen</button>
+    <p id="puzzleText"></p>
+    <input type="text" id="puzzleAnswer" placeholder="Antwort hier eingeben">
+    <button onclick="submitPuzzle()">Antwort prüfen</button>
+  </details>
+</section>
+
+<section>
+  <h2>Notizen & PDF</h2>
+  <textarea id="notes" rows="5" placeholder="Schreibe deine Notizen hier..."></textarea>
+  <button onclick="exportPDF()">📄 PDF exportieren</button>
+</section>
+
+<section>
+  <h2>Schülerforum</h2>
+  <textarea id="forumInput" rows="2" placeholder="Kommentar schreiben..."></textarea>
+  <button onclick="postComment()">Kommentar posten</button>
+  <div id="forumComments"></div>
+</section>
+
+<script type="module">
+// ------------------ Firebase Setup ------------------
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, addDoc, query, orderBy, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAIkcqeCGL2cNw9Hzk_oiSN-YJs__-Li2s",
+  authDomain: "lernarchiv-484a9.firebaseapp.com",
+  projectId: "lernarchiv-484a9",
+  storageBucket: "lernarchiv-484a9.firebasestorage.app",
+  messagingSenderId: "139576236245",
+  appId: "1:139576236245:web:b7aa299627c762b0b7aa5c",
+  measurementId: "G-94BNRL7J7Z"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth();
+const db = getFirestore();
+
+// ------------------ Auth ------------------
+window.login = async function(){
+  const provider = new GoogleAuthProvider();
+  const result = await signInWithPopup(auth, provider);
+  const user = result.user;
+
+  const userRef = doc(db, "users", user.uid);
+  await setDoc(userRef, { name: user.displayName, xp: 0, level: 1, badges: [] }, { merge: true });
+  alert("Eingeloggt als " + user.displayName);
+  loadUserData();
+};
+
+onAuthStateChanged(auth, () => {
+  loadUserData();
+});
+
+// ------------------ XP & Level ------------------
+async function loadUserData(){
+  const user = auth.currentUser;
+  if(!user) return;
+  const userRef = doc(db, "users", user.uid);
+  const snap = await getDoc(userRef);
+  if(!snap.exists()) return;
+
+  const data = snap.data();
+  document.getElementById("levelText").innerText = `Level: ${data.level} | XP: ${data.xp}`;
+  document.getElementById("xpFill").style.width = `${Math.min((data.xp/100)*100,100)}%`;
+
+  // Badges laden
+  const badgeContainer = document.getElementById("badgesContainer");
+  badgeContainer.innerHTML = "";
+  if(data.badges) data.badges.forEach(b => {
+    const span = document.createElement("span");
+    span.className = "badge";
+    span.innerText = b;
+    badgeContainer.appendChild(span);
+  });
+}
+
+window.addXP = async function(amount){
+  const user = auth.currentUser;
+  if(!user) return alert("Bitte erst einloggen!");
+  const userRef = doc(db, "users", user.uid);
+  const snap = await getDoc(userRef);
+  const data = snap.data();
+  let xp = data.xp + amount;
+  let level = data.level;
+  if(xp >= 100){ level += 1; xp -= 100; alert("Level Up! 🎉"); }
+  await updateDoc(userRef, { xp, level });
+  loadUserData();
+};
+
+// ------------------ Weekly Puzzle ------------------
+const puzzles = {
+  mathe: { q: "5 + 7 * 2 = ?", a: "19" },
+  deutsch: { q: "Synonym für 'schnell'?", a: "rasch" },
+  bio: { q: "Hauptbestandteil der Zellmembran?", a: "lipide" },
+  geschichte: { q: "Erstes Weltkriegsjahr?", a: "1914" }
+};
+
+window.getWeeklyPuzzle = function(){
+  const subject = document.getElementById("subjectSelect").value;
+  document.getElementById("puzzleText").innerText = puzzles[subject].q;
+};
+
+window.submitPuzzle = function(){
+  const subject = document.getElementById("subjectSelect").value;
+  const answer = document.getElementById("puzzleAnswer").value.toLowerCase();
+  if(answer === puzzles[subject].a){
+    alert("Richtig! +20 XP");
+    addXP(20);
+  } else {
+    alert("Falsch! Versuche es nochmal.");
+  }
+};
+
+// ------------------ PDF Export ------------------
+window.exportPDF = function(){
+  const notes = document.getElementById("notes").value;
+  const blob = new Blob([notes], {type: "text/plain"});
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "Notizen.txt"; // Kann mit jsPDF zu PDF erweitert werden
+  link.click();
+};
+
+// ------------------ Forum ------------------
+window.postComment = async function(){
+  const user = auth.currentUser;
+  if(!user) return alert("Bitte erst einloggen!");
+  const text = document.getElementById("forumInput").value;
+  if(!text) return;
+  await addDoc(collection(db, "forum"), { text, user: user.displayName, timestamp: Date.now() });
+  document.getElementById("forumInput").value = "";
+  loadComments();
+};
+
+async function loadComments(){
+  const forumDiv = document.getElementById("forumComments");
+  forumDiv.innerHTML = "";
+  const q = query(collection(db, "forum"), orderBy("timestamp","asc"));
+  const snap = await getDocs(q);
+  snap.forEach(doc => {
+    const c = document.createElement("div");
+    c.innerText = doc.data().user + ": " + doc.data().text;
+    forumDiv.appendChild(c);
+  });
+}
+
+// Initial load
+loadComments();
+
+</script>
+</body>
+</html>
